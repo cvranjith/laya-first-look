@@ -4,6 +4,14 @@ video IDs) — no real creators, channels, or personal watch history.
 
 Each entry carries a `true_category` we authored on purpose, so both models'
 outputs can be scored against a known-correct label, not just eyeballed.
+
+v2: the first version gave every video hashtags that were near-duplicates of
+its category name (e.g. Tech News -> #TechNews, #Tech), which let a model
+solve the task by string-matching hashtags to category names instead of
+reading the title/description. Real YouTube videos often have no hashtags at
+all, or generic ones unrelated to topic. This version gives hashtags to only
+a third of videos, drawn from a single generic pool shared across every
+category, so category can only be inferred from actual content.
 """
 import json
 import random
@@ -11,6 +19,19 @@ import random
 random.seed(42)
 
 CATEGORIES = ["News", "AI News", "Tech News", "Entertainment", "Comedy", "Music", "Tutorial", "Other"]
+
+# Shared across every category on purpose -- generic engagement/upload tags
+# that carry no topic signal, the way most real YouTube hashtags actually are.
+GENERIC_HASHTAGS = ["#shorts", "#subscribe", "#trending", "#viral", "#newvideo",
+                     "#weeklyupload", "#mustwatch", "#fyp", "#2026"]
+
+GENERIC_OUTROS = [
+    "Don't forget to like and subscribe!",
+    "Let us know what you think in the comments.",
+    "New uploads every week.",
+    "Thanks for watching!",
+    "",  # no outro at all, for variety
+]
 
 TEMPLATES = {
     "News": {
@@ -22,7 +43,6 @@ TEMPLATES = {
         ],
         "topics": ["Election Results", "Trade Talks", "Severe Weather Warning", "Central Bank Rate Decision",
                    "Border Policy Change", "Supreme Court Ruling", "Transit Strike"],
-        "hashtags": ["#News", "#BreakingNews", "#WorldNews"],
     },
     "AI News": {
         "channels": ["AI Frontier", "Neural Net News", "The AI Beat"],
@@ -33,7 +53,6 @@ TEMPLATES = {
         ],
         "topics": ["A Major Lab", "An Open-Source Team", "A Cloud Provider", "A Chip Maker",
                    "A Research Consortium", "A Startup You Haven't Heard Of Yet"],
-        "hashtags": ["#AI", "#ArtificialIntelligence", "#MachineLearning", "#LLM"],
     },
     "Tech News": {
         "channels": ["Daily Tech Byte", "Circuit Report", "Gadget Wire"],
@@ -44,7 +63,6 @@ TEMPLATES = {
         ],
         "topics": ["New Flagship Phone", "Foldable Laptop", "Wireless Earbuds V2", "Smart Home Hub",
                    "Next-Gen Console", "Budget Tablet Lineup"],
-        "hashtags": ["#Tech", "#Gadgets", "#TechNews"],
     },
     "Entertainment": {
         "channels": ["Screen Buzz", "Pop Culture Daily", "The Marquee"],
@@ -55,7 +73,6 @@ TEMPLATES = {
         ],
         "topics": ["The Season Finale", "This Year's Awards Show", "The Long-Awaited Sequel",
                    "The Streaming Premiere", "The Comic-Con Panel"],
-        "hashtags": ["#Entertainment", "#Movies", "#Celebrity"],
     },
     "Comedy": {
         "channels": ["FunnyClips Central", "Chuckle Factory", "Dry Humor Daily"],
@@ -66,7 +83,6 @@ TEMPLATES = {
         ],
         "topics": ["Adulting", "A Silent Office Day", "Cooking Without a Recipe", "Parallel Parking",
                    "Answering Emails Honestly", "A First Date"],
-        "hashtags": ["#Comedy", "#Funny", "#Sketch"],
     },
     "Music": {
         "channels": ["Chart Toppers", "Indie Waves", "Studio Sessions"],
@@ -77,7 +93,6 @@ TEMPLATES = {
         ],
         "topics": ["Midnight Drive", "Paper Skies", "Never Look Back", "Golden Hour", "Static Heart",
                    "Slow Burn"],
-        "hashtags": ["#Music", "#NewMusic", "#MusicVideo"],
     },
     "Tutorial": {
         "channels": ["CodeWithSam", "Learn It Fast", "The Practical Guide"],
@@ -88,7 +103,6 @@ TEMPLATES = {
         ],
         "topics": ["Set Up a Home Network", "Bake Sourdough Bread", "Build a Budget in a Spreadsheet",
                    "Fine-Tune a Small Model", "Fix a Leaky Faucet", "Learn Basic Python"],
-        "hashtags": ["#Tutorial", "#HowTo", "#Learn"],
     },
     "Other": {
         "channels": ["Random Curiosities", "Everyday Explorer"],
@@ -99,7 +113,6 @@ TEMPLATES = {
         ],
         "topics": ["a Lighthouse Keeper", "the World's Smallest Post Office", "an Alpaca Farm",
                    "a 24-Hour Diner", "a Retro Arcade"],
-        "hashtags": ["#Vlog", "#Lifestyle"],
     },
 }
 
@@ -121,8 +134,13 @@ def build_entry(category):
     spec = TEMPLATES[category]
     channel = random.choice(spec["channels"])
     title = random.choice(spec["titles"]).format(topic=random.choice(spec["topics"]))
-    tags = random.sample(spec["hashtags"], k=min(2, len(spec["hashtags"])))
-    description = f"{title}. Subscribe to {channel} for more. {' '.join(tags)}"
+    outro = random.choice(GENERIC_OUTROS)
+    subscribe_line = f"Subscribe to {channel} for more." if random.random() < 0.6 else ""
+    # Only ~1/3 of videos get hashtags at all, and they're always the same
+    # topic-agnostic pool -- no hashtag reveals the category.
+    tags = random.sample(GENERIC_HASHTAGS, k=random.choice([1, 2])) if random.random() < 0.33 else []
+    parts = [title + ".", subscribe_line, outro, " ".join(tags)]
+    description = " ".join(p for p in parts if p)
     return {
         "video_id": fake_video_id(),
         "url": f"https://www.youtube.com/watch?v={fake_video_id()}",

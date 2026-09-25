@@ -177,41 +177,52 @@ billing, Jev: shipping) — reasonable systems could differ on either.
 ### 8. Batch classification — 100 synthetic YouTube videos — [`test_batch_categorize.py`](test_batch_categorize.py)
 
 To test a realistic batch workload, we generated 100 fabricated (not real, no personal watch
-history) YouTube video entries — title, description, channel name, hashtags — spread evenly
-across 8 categories: News, AI News, Tech News, Entertainment, Comedy, Music, Tutorial, Other
-(see [`generate_dataset.py`](generate_dataset.py) and
+history) YouTube video entries — title, description, channel name, occasional hashtags — spread
+evenly across 8 categories: News, AI News, Tech News, Entertainment, Comedy, Music, Tutorial,
+Other (see [`generate_dataset.py`](generate_dataset.py) and
 [`data/youtube_dataset.json`](data/youtube_dataset.json)). Each entry carries an authored
 ground-truth category, so both models' picks can be scored for accuracy rather than eyeballed.
 
+**A methodology fix that mattered:** the first version of this dataset gave every video
+hashtags that were near-duplicates of its own category name (`Tech News` → `#TechNews`, `#Tech`;
+`Comedy` → `#Comedy`, `#Funny`). That leaks the label into the input — a model can get a long
+way by string-matching hashtags to category names instead of reading the title/description at
+all, which isn't a realistic test (most real YouTube videos have no hashtags, or generic ones
+unrelated to topic). The dataset below gives hashtags to only ~1/3 of videos, drawn from a single
+generic pool shared across every category (`#shorts`, `#trending`, `#2026`, etc.), so category
+can only be inferred from actual content. Re-running after this fix changed the picture:
+
 **Accuracy** (identical schema and wording sent to both, no tuning for either):
 
-| Category | Laya | Jev |
-|---|---|---|
-| News | 9/13 | 13/13 |
-| AI News | 10/13 | 13/13 |
-| Tech News | 13/13 | 13/13 |
-| Entertainment | 9/13 | 13/13 |
-| Comedy | 12/12 | 12/12 |
-| Music | 12/12 | 12/12 |
-| Tutorial | 12/12 | 12/12 |
-| Other | 0/12 | 12/12 |
-| **Overall** | **77%** | **100%** |
+| Category | Laya (leaky hashtags) | Laya (fixed dataset) | Jev (both versions) |
+|---|---|---|---|
+| News | 9/13 | 10/13 | 13/13 |
+| AI News | 10/13 | **4/13** | 13/13 |
+| Tech News | 13/13 | 13/13 | 13/13 |
+| Entertainment | 9/13 | **3/13** | 13/13 |
+| Comedy | 12/12 | 12/12 | 12/12 |
+| Music | 12/12 | 11/12 | 12/12 |
+| Tutorial | 12/12 | 10/12 | 12/12 |
+| Other | 0/12 | 0/12 | 12/12 |
+| **Overall** | **77%** | **63%** | **100%** |
 
-Laya's biggest miss is the catch-all "Other" bucket — it consistently pulled miscellaneous
-videos (an alpaca farm, a retro arcade, a 24-hour diner) into "Tech News" instead, which is
-clearly wrong reading the actual titles. This lines up with the calibration warning Laya prints
-on every run (see Caveats below).
+**Jev's accuracy didn't move at all between dataset versions — Laya's dropped 14 points.** That's
+the real finding here: Jev wasn't relying on the hashtag shortcut in the first place, while Laya
+was leaning on it more than the original (flawed) numbers suggested. With the shortcut gone,
+Laya shows a clear bias toward **Tech News** and **Comedy** as default picks whenever it's
+unsure, and still whiffs completely on the catch-all "Other" bucket in both versions — consistent
+with the calibration warning Laya prints on every run (see Caveats below).
 
-**Timing** — reported as several numbers for Jev, because our first attempt at this measured
-mostly our own client code rather than the API itself:
+**Timing** (from the fixed-dataset run) — reported as several numbers for Jev, because our first
+attempt at this measured mostly our own client code rather than the API itself:
 
 | Approach | Total (100 videos) | Per video |
 |---|---|---|
-| Laya — one `predict_batch()` call | 6.98s | 69.8 ms |
+| Laya — one `predict_batch()` call | 7.17s | 71.7 ms |
 | Jev — sequential, fresh connection per call (our first, buggy attempt) | 70.10s | 701.0 ms |
-| Jev — sequential, reused connection | 26.08s | 260.8 ms |
+| Jev — sequential, reused connection | 26.13s | 261.3 ms |
 | Jev — concurrent (10 workers), reused connection | 3.19s | 31.9 ms |
-| Jev — server-side only (`x-envoy-upstream-service-time` response header) | — | avg 63.7 ms (range 37.0–153.0) |
+| Jev — server-side only (`x-envoy-upstream-service-time` response header) | — | avg 57.7 ms (range 37.0–210.0) |
 
 The first Jev number (701ms/video) was mostly a bug: [`jev_client.py`](jev_client.py)
 originally opened a brand-new TCP+TLS connection for every single request instead of reusing
