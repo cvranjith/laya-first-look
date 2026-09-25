@@ -31,6 +31,7 @@ Package versions (see [`requirements.txt`](requirements.txt)):
 | `torch` | 2.14.0 |
 | `transformers` | 5.17.0 |
 | `huggingface_hub` | 1.33.0 |
+| `requests` | 2.34.2 |
 
 ## Setup
 
@@ -140,6 +141,98 @@ Part of the drop past 4→8 questions is a documented optimization in Laya itsel
 enables fp16 autocast on MPS once the batch reaches a minimum row count (fp16 loses to fp32
 on very small batches on Apple GPUs), so the gain isn't purely from amortized overhead.
 
+## Comparison with Jev (TypeSafe AI)
+
+Jev is TypeSafe AI's closed, commercial equivalent — same category of system (typed
+choice/score/yes-no decisions, no text generation), accessed via their hosted API
+(`https://api.typesafe.ai/v1/systemone`, model `jev-latest`) instead of run locally. We sent it
+the exact same inputs and question schemas used above, with no custom parameters.
+
+**Before the numbers — a hardware caveat that applies to everything below:** Laya ran locally
+on the Mac mini described at the top of this file. Jev ran on whatever infrastructure TypeSafe
+operates behind their API — unknown to us, presumably a cloud GPU fleet, not a consumer Mac.
+Any latency comparison here is a personal computer against someone else's server, which isn't a
+meaningful "which is faster" comparison in either direction, since the hardware isn't
+comparable. The numbers are included for completeness and are reproducible with the scripts in
+this repo, but we're deliberately not drawing a speed verdict from them — read them as "here's
+what each setup measured," not a leaderboard.
+
+### 7. Side-by-side decisions — [`test_compare.py`](test_compare.py)
+
+| Case | Field | Laya | Jev |
+|---|---|---|---|
+| Billing/churn | `department` | billing 98.4% | billing 100% |
+| | `churn_risk` | 0.966 | 0.970 |
+| Support ticket | `department` | technical 85.9% | technical 100% |
+| | `urgency` | 3.36/4 | 3.04/4 (conf 74%) |
+| | `is_hardware_issue` | 0.770 | 0.320 |
+| Hindi refund | `department` | billing 63.5% (low internal confidence) | shipping 97% |
+| | `wants_refund` | 0.980 | 0.860 |
+
+Both agree on the clear-cut cases. They diverge on two genuinely ambiguous ones: whether a
+flickering laptop screen after a software update counts as a "hardware issue" (Laya: yes 77%,
+Jev: no 32%), and which department a delayed-order-plus-refund-threat should route to (Laya:
+billing, Jev: shipping) — reasonable systems could differ on either.
+
+### 8. Batch classification — 100 synthetic YouTube videos — [`test_batch_categorize.py`](test_batch_categorize.py)
+
+To test a realistic batch workload, we generated 100 fabricated (not real, no personal watch
+history) YouTube video entries — title, description, channel name, hashtags — spread evenly
+across 8 categories: News, AI News, Tech News, Entertainment, Comedy, Music, Tutorial, Other
+(see [`generate_dataset.py`](generate_dataset.py) and
+[`data/youtube_dataset.json`](data/youtube_dataset.json)). Each entry carries an authored
+ground-truth category, so both models' picks can be scored for accuracy rather than eyeballed.
+
+**Accuracy** (identical schema and wording sent to both, no tuning for either):
+
+| Category | Laya | Jev |
+|---|---|---|
+| News | 9/13 | 13/13 |
+| AI News | 10/13 | 13/13 |
+| Tech News | 13/13 | 13/13 |
+| Entertainment | 9/13 | 13/13 |
+| Comedy | 12/12 | 12/12 |
+| Music | 12/12 | 12/12 |
+| Tutorial | 12/12 | 12/12 |
+| Other | 0/12 | 12/12 |
+| **Overall** | **77%** | **100%** |
+
+Laya's biggest miss is the catch-all "Other" bucket — it consistently pulled miscellaneous
+videos (an alpaca farm, a retro arcade, a 24-hour diner) into "Tech News" instead, which is
+clearly wrong reading the actual titles. This lines up with the calibration warning Laya prints
+on every run (see Caveats below).
+
+**Timing** — reported as several numbers for Jev, because our first attempt at this measured
+mostly our own client code rather than the API itself:
+
+| Approach | Total (100 videos) | Per video |
+|---|---|---|
+| Laya — one `predict_batch()` call | 6.98s | 69.8 ms |
+| Jev — sequential, fresh connection per call (our first, buggy attempt) | 70.10s | 701.0 ms |
+| Jev — sequential, reused connection | 26.08s | 260.8 ms |
+| Jev — concurrent (10 workers), reused connection | 3.19s | 31.9 ms |
+| Jev — server-side only (`x-envoy-upstream-service-time` response header) | — | avg 63.7 ms (range 37.0–153.0) |
+
+The first Jev number (701ms/video) was mostly a bug: [`jev_client.py`](jev_client.py)
+originally opened a brand-new TCP+TLS connection for every single request instead of reusing
+one, and that connection setup dominated the measurement. Once fixed and called the way you'd
+actually call an HTTP API for a batch job — a persistent connection plus modest concurrency —
+Jev's numbers land in a similar range to Laya's local inference, and TypeSafe's own gateway
+reports doing the underlying work in ~64ms on average via a response header
+(`x-envoy-upstream-service-time`), which appears to be what their playground's displayed
+response time is sourced from.
+
+As above: given the hardware asymmetry (a Mac mini vs. an unknown cloud backend), we're
+presenting this table without a "faster" conclusion.
+
+**Reproduce it yourself:**
+
+```bash
+export JEV_API_KEY=$(cat /path/to/your/jev-api-key)   # get a key at typesafe.ai
+.venv/bin/python test_compare.py
+.venv/bin/python test_batch_categorize.py
+```
+
 ## Caveats
 
 - On every run, the library printed: *"this checkpoint ships invalid temperatures or values
@@ -150,3 +243,8 @@ on very small batches on Apple GPUs), so the gain isn't purely from amortized ov
   Meant to show what's possible, not to be a formal benchmark.
 - `typed-decisions` was tested with a custom schema, not one of its four intended workflows
   exactly — it was force-selected via `model=` rather than auto-routed.
+- The Jev comparison uses a paid third-party API; you need your own `JEV_API_KEY` to run those
+  scripts, and doing so incurs whatever cost/usage TypeSafe AI charges for it. We checked
+  TypeSafe's public Terms of Use before publishing this and found no clause restricting
+  benchmark or comparison publication, though they reference a separate Acceptable Use Policy
+  we didn't fully retrieve — worth a look yourself before building anything further on this.
