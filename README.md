@@ -182,38 +182,30 @@ evenly across 8 categories: News, AI News, Tech News, Entertainment, Comedy, Mus
 Other (see [`generate_dataset.py`](generate_dataset.py) and
 [`data/youtube_dataset.json`](data/youtube_dataset.json)). Each entry carries an authored
 ground-truth category, so both models' picks can be scored for accuracy rather than eyeballed.
-
-**A methodology fix that mattered:** the first version of this dataset gave every video
-hashtags that were near-duplicates of its own category name (`Tech News` → `#TechNews`, `#Tech`;
-`Comedy` → `#Comedy`, `#Funny`). That leaks the label into the input — a model can get a long
-way by string-matching hashtags to category names instead of reading the title/description at
-all, which isn't a realistic test (most real YouTube videos have no hashtags, or generic ones
-unrelated to topic). The dataset below gives hashtags to only ~1/3 of videos, drawn from a single
-generic pool shared across every category (`#shorts`, `#trending`, `#2026`, etc.), so category
-can only be inferred from actual content. Re-running after this fix changed the picture:
+Only about a third of videos carry hashtags, drawn from a single generic, topic-agnostic pool
+shared across every category (`#shorts`, `#trending`, `#2026`, etc.) — matching how real YouTube
+videos are hashtagged, and ensuring category can only be inferred from the actual title and
+description content, not a hashtag matching the category name.
 
 **Accuracy** (identical schema and wording sent to both, no tuning for either):
 
-| Category | Laya (leaky hashtags) | Laya (fixed dataset) | Jev (both versions) |
-|---|---|---|---|
-| News | 9/13 | 10/13 | 13/13 |
-| AI News | 10/13 | **4/13** | 13/13 |
-| Tech News | 13/13 | 13/13 | 13/13 |
-| Entertainment | 9/13 | **3/13** | 13/13 |
-| Comedy | 12/12 | 12/12 | 12/12 |
-| Music | 12/12 | 11/12 | 12/12 |
-| Tutorial | 12/12 | 10/12 | 12/12 |
-| Other | 0/12 | 0/12 | 12/12 |
-| **Overall** | **77%** | **63%** | **100%** |
+| Category | Laya | Jev |
+|---|---|---|
+| News | 10/13 | 13/13 |
+| AI News | 4/13 | 13/13 |
+| Tech News | 13/13 | 13/13 |
+| Entertainment | 3/13 | 13/13 |
+| Comedy | 12/12 | 12/12 |
+| Music | 11/12 | 12/12 |
+| Tutorial | 10/12 | 12/12 |
+| Other | 0/12 | 12/12 |
+| **Overall** | **63%** | **100%** |
 
-**Jev's accuracy didn't move at all between dataset versions — Laya's dropped 14 points.** That's
-the real finding here: Jev wasn't relying on the hashtag shortcut in the first place, while Laya
-was leaning on it more than the original (flawed) numbers suggested. With the shortcut gone,
 Laya shows a clear bias toward **Tech News** and **Comedy** as default picks whenever it's
-unsure, and still whiffs completely on the catch-all "Other" bucket in both versions — consistent
-with the calibration warning Laya prints on every run (see Caveats below).
+unsure, and whiffs completely on the catch-all "Other" bucket — consistent with the calibration
+warning Laya prints on every run (see Caveats below).
 
-**Timing** (from the fixed-dataset run) — reported as several numbers for Jev, because our first
+**Timing** — reported as several numbers for Jev, because our first
 attempt at this measured mostly our own client code rather than the API itself:
 
 | Approach | Total (100 videos) | Per video |

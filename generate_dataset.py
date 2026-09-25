@@ -5,13 +5,10 @@ video IDs) — no real creators, channels, or personal watch history.
 Each entry carries a `true_category` we authored on purpose, so both models'
 outputs can be scored against a known-correct label, not just eyeballed.
 
-v2: the first version gave every video hashtags that were near-duplicates of
-its category name (e.g. Tech News -> #TechNews, #Tech), which let a model
-solve the task by string-matching hashtags to category names instead of
-reading the title/description. Real YouTube videos often have no hashtags at
-all, or generic ones unrelated to topic. This version gives hashtags to only
-a third of videos, drawn from a single generic pool shared across every
-category, so category can only be inferred from actual content.
+Hashtags are given to only about a third of videos, drawn from a single
+generic pool shared across every category, matching how real YouTube videos
+are hashtagged and ensuring category can only be inferred from the actual
+title/description content.
 """
 import json
 import random
